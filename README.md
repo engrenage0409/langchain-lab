@@ -16,27 +16,27 @@
 
 ## 实践验证与边界
 
-- **动态 Agent 与 MCP**：Qwen 生成规划 DAG，LangGraph 调度，Research Agent 实际调用 Milvus 和远程 HTTP MCP 的 \`lookup_rule\`，走到人工审批。工具调用日志已验证；Qwen 的规划仍可能漏掉某些要求。
-- **跨会话记忆**：在 \`chat-a\` 提炼和审核保存记忆，在新 \`chat-b\` 检索、召回；同一 thread 的消息可从 SQLite Checkpoint 恢复。用户已本地验证成功。
+- **动态 Agent 与 MCP**：Qwen 生成规划 DAG，LangGraph 调度，Research Agent 实际调用 Milvus 和远程 HTTP MCP 的 `lookup_rule`，走到人工审批。工具调用日志已验证；Qwen 的规划仍可能漏掉某些要求。
+- **跨会话记忆**：在 `chat-a` 提炼和审核保存记忆，在新 `chat-b` 检索、召回；同一 thread 的消息可从 SQLite Checkpoint 恢复。用户已本地验证成功。
 - **不属于已实现功能**：Python 直接管理推理 KV Cache、模型级精确 token 计数、生产级自动去重/冲突合并、无审核的自动记忆写入、多用户权限隔离，以及实际 DWG 图纸内容识别。
 
 ## 长短期记忆实际存在哪里？
 
-下面的相对路径均以 \`D:\GH\langchain-lab\` 为当前工作目录：
+下面的相对路径均以 `D:\GH\langchain-lab` 为当前工作目录：
 
 | 数据 | 实际存储位置 | 关键代码 |
 | --- | --- | --- |
-| 短期对话、Graph State 与 Checkpoint | \`data/real_chat_checkpoints.sqlite\`；由 \`thread_id\` 隔离 | \`real_memory_agent.py:ChatState\`、\`SqliteSaver\`、\`graph.get_state()\` |
-| 长期事实、事件与操作规则原文 | \`data/real_agent_memories.sqlite\` SQLite 表 \`memories\` | \`memory_core.py:MemoryStore.remember()/list_active()/forget()\` |
-| 长期记忆向量索引 | \`data/memory_vectors.db\` 的 Milvus Lite collection \`real_agent_memory_vectors\`（如果设置了 \`MILVUS_URI\` 则以它为准） | \`milvus_memory.py:MilvusMemoryIndex.rebuild()/search()\` |
+| 短期对话、Graph State 与 Checkpoint | `data/real_chat_checkpoints.sqlite`；由 `thread_id` 隔离 | `real_memory_agent.py:ChatState`、`SqliteSaver`、`graph.get_state()` |
+| 长期事实、事件与操作规则原文 | `data/real_agent_memories.sqlite` SQLite 表 `memories` | `memory_core.py:MemoryStore.remember()/list_active()/forget()` |
+| 长期记忆向量索引 | `data/memory_vectors.db` 的 Milvus Lite collection `real_agent_memory_vectors`（如果设置了 `MILVUS_URI` 则以它为准） | `milvus_memory.py:MilvusMemoryIndex.rebuild()/search()` |
 
-**写入长期记忆：** \`/remember\` → \`llm_memory.py:propose_memories()\`（Qwen 提取候选）→ 用户逐条确认 → \`MemoryStore.remember()\` 写 SQLite → \`MilvusMemoryIndex.rebuild()\` 用 \`nomic-embed-text\` 建立 Milvus 索引。
+**写入长期记忆：** `/remember` → `llm_memory.py:propose_memories()`（Qwen 提取候选）→ 用户逐条确认 → `MemoryStore.remember()` 写 SQLite → `MilvusMemoryIndex.rebuild()` 用 `nomic-embed-text` 建立 Milvus 索引。
 
-**读取长期记忆：** 用户提问 → \`real_memory_agent.py:retrieve()\` → Query Embedding → Milvus Top-K → \`answer()\` 将检索结果放到 Qwen Prompt → \`model.invoke()\` → 新回复写入 LangGraph State 和 Checkpoint。
+**读取长期记忆：** 用户提问 → `real_memory_agent.py:retrieve()` → Query Embedding → Milvus Top-K → `answer()` 将检索结果放到 Qwen Prompt → `model.invoke()` → 新回复写入 LangGraph State 和 Checkpoint。
 
-**读取短期记忆：** 传入同一 \`thread_id\`，由 \`SqliteSaver\` 恢复对应 \`ChatState.messages\`；\`show_history()\` 可展示最后八条，\`answer()\` 使用裁剪后的消息。Context 压缩只改变本次模型输入，不会删除 Checkpoint 原始历史。
+**读取短期记忆：** 传入同一 `thread_id`，由 `SqliteSaver` 恢复对应 `ChatState.messages`；`show_history()` 可展示最后八条，`answer()` 使用裁剪后的消息。Context 压缩只改变本次模型输入，不会删除 Checkpoint 原始历史。
 
-**遗忘：** \`/forget ID\` 调用 \`MemoryStore.forget()\`，再重建 Milvus 索引；不会同步删除旧会话 Checkpoint 中包含的同一文本。
+**遗忘：** `/forget ID` 调用 `MemoryStore.forget()`，再重建 Milvus 索引；不会同步删除旧会话 Checkpoint 中包含的同一文本。
 
 ## 复现实验
 
@@ -49,7 +49,7 @@ ollama list
 python .\05_memory\real_memory_agent.py --thread chat-a
 ~~~
 
-在 \`chat-a\` 对话，输入 \`/remember\` 审核并保存记忆，输入 \`/exit\` 后以新会话运行：
+在 `chat-a` 对话，输入 `/remember` 审核并保存记忆，输入 `/exit` 后以新会话运行：
 
 ~~~powershell
 python .\05_memory\real_memory_agent.py --thread chat-b
@@ -58,7 +58,7 @@ python .\05_memory\real_memory_agent.py --thread chat-b
 ## 仍值得掌握的概念
 
 - KV Cache 在 Ollama 推理运行时（Prefill / Decode）；不是持久化用户记忆。
-- Context Window 与 \`compact_messages()\`：当前实现是基于字符预算的裁剪，**不是**语义摘要。
+- Context Window 与 `compact_messages()`：当前实现是基于字符预算的裁剪，**不是**语义摘要。
 - Semantic / Episodic / Procedural：同一 SQLite 表的三种类型。
 - Milvus 相似度不是事实真实性概率；Memory Consolidation 需要来源检查和人工审核。
 
