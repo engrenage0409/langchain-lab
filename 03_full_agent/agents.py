@@ -16,7 +16,7 @@ def make_model() -> ChatOllama:
     return ChatOllama(
         model="qwen3-vl:2b-instruct",
         temperature=0,
-        num_ctx=8192,
+        num_ctx=4096,
     )
 
 
