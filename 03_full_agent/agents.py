@@ -21,7 +21,7 @@ def make_model() -> ChatOllama:
 
 
 class AgentWorkers:
-    def __init__(self, store: RuleStore, model: ChatOllama | None = None):
+    def __init__(self, store: RuleStore, model: ChatOllama | None = None, mcp_url: str | None = None):
         self.store = store
         self.model = model or make_model()
 
@@ -58,10 +58,31 @@ class AgentWorkers:
             "research": [search_policy],
             "validate": [validate_evidence],
         }
+        # Optional remote MCP tools: called over Streamable HTTP, not local Python.
+        if mcp_url:
+            from mcp_bridge import call_http_mcp
+
+            @tool
+            def mcp_compare_dimension(measured_mm: float, required_mm: float) -> str:
+                """Compare measured vs required dimensions using a REMOTE HTTP MCP server."""
+                return call_http_mcp(
+                    mcp_url, "compare_dimension",
+                    {"measured_mm": measured_mm, "required_mm": required_mm},
+                )
+
+            @tool
+            def mcp_lookup_rule(rule_id: str) -> str:
+                """Look up rule IDs WELD-001 or DIM-001 on a REMOTE HTTP MCP server."""
+                return call_http_mcp(mcp_url, "lookup_rule", {"rule_id": rule_id})
+
+            self.tools["geometry"].append(mcp_compare_dimension)
+            self.tools["research"].append(mcp_lookup_rule)
+            print(f"[MCP HTTP] remote tools enabled: {mcp_url}", flush=True)
+
         self.prompts = {
             "symbol": "You are the symbol specialist. Use inspect_symbols on the provided description. Discuss ONLY symbol defects. Do not infer image contents.",
-            "geometry": "You are the geometry specialist. Use inspect_dimensions on the provided description. Discuss ONLY dimensional defects. Do not infer image contents.",
-            "research": "You are the RAG researcher. Use search_policy to retrieve relevant rules. Include exact returned rule IDs. Do not fabricate sources.",
+            "geometry": "You are the geometry specialist. Use inspect_dimensions on the provided description. When a measured and a required dimension are stated and available, ALSO call mcp_compare_dimension if offered. Discuss ONLY dimensional defects. Do not infer image contents.",
+            "research": "You are the RAG researcher. Use search_policy to retrieve relevant rules. If mcp_lookup_rule is offered, also use it to check an appropriate retrieved rule ID. Include exact returned rule IDs. Do not fabricate sources.",
             "validate": "You are the evidence validator. Use validate_evidence on a claim and its supporting evidence. State limitations and do not declare a finding verified without proof.",
         }
         self.agents = {
