@@ -7,7 +7,6 @@ Run: python 05_memory/llm_memory.py
 from __future__ import annotations
 
 import json
-import re
 
 from langchain_ollama import ChatOllama
 
@@ -22,9 +21,12 @@ def parse_qwen_json(raw: str) -> dict:
     malformed objects; accept the first complete object with a visible warning.
     """
     text = raw.strip()
-    if text.startswith("```"):
-        text = re.sub(r"^\`\`\`(?:json)?\\s*", "", text, count=1, flags=re.I)
-        text = re.sub(r"\\s*\`\`\`\\s*$", "", text, count=1)
+    if text.startswith("```json"):
+        text = text[len("```json"):].lstrip()
+    elif text.startswith("```"):
+        text = text[len("```"):].lstrip()
+    if text.endswith("```"):
+        text = text[:-3].rstrip()
     first = text.find("{")
     if first < 0:
         raise ValueError(f"Qwen returned no JSON object; output={raw[:400]!r}")
