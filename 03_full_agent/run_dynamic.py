@@ -116,8 +116,7 @@ def main() -> None:
                     )
                 result = graph.invoke(
                     Command(resume=human_approval()),
-                    config=config,
-                    recursion_limit=50,
+                    config={**config, "recursion_limit": 50},
                 )
             else:
                 if saved.values:
@@ -127,8 +126,7 @@ def main() -> None:
                     )
                 result = graph.invoke(
                     initial_state(args.task, args.description),
-                    config=config,
-                    recursion_limit=50,
+                    config={**config, "recursion_limit": 50},
                 )
                 if result.get("__interrupt__"):
                     print("\n[PAUSED] Review the proposed DAG and results:")
@@ -137,8 +135,7 @@ def main() -> None:
                     print("\nTip: terminate the script and rerun with --resume to test checkpoint recovery.")
                     result = graph.invoke(
                         Command(resume=human_approval()),
-                        config=config,
-                        recursion_limit=50,
+                        config={**config, "recursion_limit": 50},
                     )
 
             if result.get("__interrupt__"):
