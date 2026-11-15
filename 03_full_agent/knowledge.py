@@ -36,6 +36,10 @@ class RuleStore:
     def seed(self) -> None:
         """Create and populate the demo collection once, before parallel work."""
         if self.client.has_collection(self.collection):
+            # An existing Milvus collection may be in the released state
+            # after a previous process exits; reload before searching.
+            self.client.load_collection(collection_name=self.collection)
+            print(f"[Milvus] loaded existing collection: {self.collection}", flush=True)
             return
         vectors = self.embeddings.embed_documents([text for _, text in SEED_RULES])
         if not vectors:
@@ -55,7 +59,8 @@ class RuleStore:
             for (source, text), vector in zip(SEED_RULES, vectors)
         ]
         self.client.insert(collection_name=self.collection, data=records)
-        print(f"[Milvus] seeded {len(records)} rules", flush=True)
+        self.client.load_collection(collection_name=self.collection)
+        print(f"[Milvus] seeded and loaded {len(records)} rules", flush=True)
 
     def search(self, query: str, top_k: int = 3) -> list[dict]:
         query_vector = self.embeddings.embed_query(query)
