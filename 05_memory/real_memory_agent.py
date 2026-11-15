@@ -103,7 +103,13 @@ def review_and_save(graph, config, model, store, index):
         return
     print("\n[CONSOLIDATION] Qwen proposes long-term memories from this thread...")
     try:
-        proposed = propose_memories(model, messages)
+        # JSON mode improves compliance on small Qwen models; the parser
+        # still validates and reports malformed model responses.
+        extraction_model = ChatOllama(
+            model="qwen3-vl:2b-instruct", temperature=0,
+            num_ctx=4096, format="json",
+        )
+        proposed = propose_memories(extraction_model, messages)
     except Exception as e:
         print(f"Memory extraction failed: {type(e).__name__}: {e}")
         return
