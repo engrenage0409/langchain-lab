@@ -1,3 +1,69 @@
+# Agent / MCP / Memory 学习归档（2026-11）
+
+> 本仓库为可运行的学习实验；不是可直接上线的生产系统。LLM / Agent 学习线在此阶段性收尾。
+
+## 学习路线与源码
+
+| 模块 | 已实现内容 | 入口 |
+| --- | --- | --- |
+| LangChain | Qwen Tool Calling、@tool | [01_langchain/mini_agent.py](01_langchain/mini_agent.py) |
+| LangGraph | State / Reducer / 并行节点 | [02_langgraph/parallel_llm_review.py](02_langgraph/parallel_llm_review.py) |
+| Dynamic Multi-Agent | Qwen DAG Planner、Send Scheduler、Milvus RAG、Human Approval、Checkpoint | [03_full_agent/run_dynamic.py](03_full_agent/run_dynamic.py) |
+| MCP | stdio / Streamable HTTP、Tools/Resources/Prompts、LangGraph HTTP Client、Qwen 远程 Tool | [04_mcp/README.md](04_mcp/README.md) |
+| Memory | Context、短期状态、三种长期记忆、Milvus 检索、Qwen 提炼和遗忘 | [05_memory/README.md](05_memory/README.md) |
+
+此前学习的 Agent Harness / Pi Coding Agent 另有独立项目，不在这五个目录内。
+
+## 实践验证与边界
+
+- **动态 Agent 与 MCP**：Qwen 生成规划 DAG，LangGraph 调度，Research Agent 实际调用 Milvus 和远程 HTTP MCP 的 \`lookup_rule\`，走到人工审批。工具调用日志已验证；Qwen 的规划仍可能漏掉某些要求。
+- **跨会话记忆**：在 \`chat-a\` 提炼和审核保存记忆，在新 \`chat-b\` 检索、召回；同一 thread 的消息可从 SQLite Checkpoint 恢复。用户已本地验证成功。
+- **不属于已实现功能**：Python 直接管理推理 KV Cache、模型级精确 token 计数、生产级自动去重/冲突合并、无审核的自动记忆写入、多用户权限隔离，以及实际 DWG 图纸内容识别。
+
+## 长短期记忆实际存在哪里？
+
+下面的相对路径均以 \`D:\GH\langchain-lab\` 为当前工作目录：
+
+| 数据 | 实际存储位置 | 关键代码 |
+| --- | --- | --- |
+| 短期对话、Graph State 与 Checkpoint | \`data/real_chat_checkpoints.sqlite\`；由 \`thread_id\` 隔离 | \`real_memory_agent.py:ChatState\`、\`SqliteSaver\`、\`graph.get_state()\` |
+| 长期事实、事件与操作规则原文 | \`data/real_agent_memories.sqlite\` SQLite 表 \`memories\` | \`memory_core.py:MemoryStore.remember()/list_active()/forget()\` |
+| 长期记忆向量索引 | \`data/memory_vectors.db\` 的 Milvus Lite collection \`real_agent_memory_vectors\`（如果设置了 \`MILVUS_URI\` 则以它为准） | \`milvus_memory.py:MilvusMemoryIndex.rebuild()/search()\` |
+
+**写入长期记忆：** \`/remember\` → \`llm_memory.py:propose_memories()\`（Qwen 提取候选）→ 用户逐条确认 → \`MemoryStore.remember()\` 写 SQLite → \`MilvusMemoryIndex.rebuild()\` 用 \`nomic-embed-text\` 建立 Milvus 索引。
+
+**读取长期记忆：** 用户提问 → \`real_memory_agent.py:retrieve()\` → Query Embedding → Milvus Top-K → \`answer()\` 将检索结果放到 Qwen Prompt → \`model.invoke()\` → 新回复写入 LangGraph State 和 Checkpoint。
+
+**读取短期记忆：** 传入同一 \`thread_id\`，由 \`SqliteSaver\` 恢复对应 \`ChatState.messages\`；\`show_history()\` 可展示最后八条，\`answer()\` 使用裁剪后的消息。Context 压缩只改变本次模型输入，不会删除 Checkpoint 原始历史。
+
+**遗忘：** \`/forget ID\` 调用 \`MemoryStore.forget()\`，再重建 Milvus 索引；不会同步删除旧会话 Checkpoint 中包含的同一文本。
+
+## 复现实验
+
+~~~powershell
+conda activate pytorch_env
+cd D:\GH\langchain-lab
+git pull
+python -m pip install -r requirements.txt
+ollama list
+python .\05_memory\real_memory_agent.py --thread chat-a
+~~~
+
+在 \`chat-a\` 对话，输入 \`/remember\` 审核并保存记忆，输入 \`/exit\` 后以新会话运行：
+
+~~~powershell
+python .\05_memory\real_memory_agent.py --thread chat-b
+~~~
+
+## 仍值得掌握的概念
+
+- KV Cache 在 Ollama 推理运行时（Prefill / Decode）；不是持久化用户记忆。
+- Context Window 与 \`compact_messages()\`：当前实现是基于字符预算的裁剪，**不是**语义摘要。
+- Semantic / Episodic / Procedural：同一 SQLite 表的三种类型。
+- Milvus 相似度不是事实真实性概率；Memory Consolidation 需要来源检查和人工审核。
+
+---
+
 # NEW: Qwen-driven dynamic DAG planner (recommended entrypoint)
 
 **This is the new fully task-dependent workflow.** Earlier `03_full_agent/main.py` and `workflow.py` remain as fixed-workflow comparison examples. Use **`run_dynamic.py`** for autonomous planning.
@@ -69,7 +135,7 @@ $env:MILVUS_URI = "http://127.0.0.1:19530"
 python .\03_full_agent\run_dynamic.py --thread real-001
 ```
 
-You must have a Milvus server running and reachable at `MILVUS_URI` (e.g. Milvus Standalone via Docker Desktop / WSL2 or remote server). See [official Milvus Docker setup](https://milvus.io/docs/install_standalone-docker-compose.md). **Native Windows Milvus Lite is not a reliable default; the requirements deliberately skip it on Windows.** On supported Linux setups, you can omit `MILVUS_URI` and use the local default `./data/agent_rules.db`.
+For this project, leaving `MILVUS_URI` unset uses a local Milvus Lite database (`./data/agent_rules.db`). This has been verified in the user's Windows environment, although installation support varies across Windows setups; `requirements.txt` deliberately skips an automatic Milvus Lite install on Windows. Set `MILVUS_URI` only when using a separately running remote Milvus server.
 
 If Qwen fails to generate valid JSON twice, the planner raises an error rather than silently switching to a hardcoded plan. With the 2B model you may need to retry using a new `--thread` or swap to a stronger Ollama model in `planner.py` and `agents.py`.
 
