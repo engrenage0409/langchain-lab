@@ -9,7 +9,7 @@ from langchain.agents import create_agent
 from langchain.tools import tool
 from langchain_ollama import ChatOllama
 
-from .knowledge import RuleStore
+from knowledge import RuleStore
 
 
 def make_model() -> ChatOllama:
