@@ -7,10 +7,38 @@ Run: python 05_memory/llm_memory.py
 from __future__ import annotations
 
 import json
+import re
 
 from langchain_ollama import ChatOllama
 
 from memory_core import compact_messages
+
+
+def parse_qwen_json(raw: str) -> dict:
+    """Read the first complete JSON object in a response.
+
+    Small Qwen models sometimes append another object or prose after JSON.
+    Never use greedy regex (which can eat multiple JSON objects). Reject
+    malformed objects; accept the first complete object with a visible warning.
+    """
+    text = raw.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^\`\`\`(?:json)?\\s*", "", text, count=1, flags=re.I)
+        text = re.sub(r"\\s*\`\`\`\\s*$", "", text, count=1)
+    first = text.find("{")
+    if first < 0:
+        raise ValueError(f"Qwen returned no JSON object; output={raw[:400]!r}")
+    try:
+        obj, end = json.JSONDecoder().raw_decode(text[first:])
+    except json.JSONDecodeError as exc:
+        print(f"[Memory JSON error] Qwen output excerpt: {raw[:500]!r}")
+        raise ValueError(f"Qwen returned invalid JSON: {exc}") from exc
+    suffix = text[first + end:].strip()
+    if suffix and suffix != "```":
+        print(f"[Memory JSON warning] Ignoring trailing model text: {suffix[:160]!r}")
+    if not isinstance(obj, dict):
+        raise ValueError("Qwen JSON root must be an object")
+    return obj
 
 
 def propose_memories(model: ChatOllama, turns: list[dict]) -> dict:
@@ -34,7 +62,7 @@ def propose_memories(model: ChatOllama, turns: list[dict]) -> dict:
         ("human", numbered),
     ])
     raw = response.content if isinstance(response.content, str) else str(response.content)
-    parsed = json.loads(raw)
+    parsed = parse_qwen_json(raw)
     if not isinstance(parsed, dict) or not isinstance(parsed.get("candidates"), list):
         raise ValueError("Invalid Qwen JSON response")
     safe_candidates = []
