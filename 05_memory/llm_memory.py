@@ -43,53 +43,85 @@ def parse_qwen_json(raw: str) -> dict:
     return obj
 
 
-def propose_memories(model: ChatOllama, turns: list[dict]) -> dict:
-    numbered = "\n".join(
-        f"{i}. {m['role']}: {m['content']}"
-        for i, m in enumerate(turns)
-    )
-    response = model.invoke([
-        (
-            "system",
-            "Extract only explicitly supported NON-SENSITIVE, useful facts, "
-            "events and procedures from the numbered conversation. "
-            "Do not invent information. Do not store secrets. "
-            "Return ONLY JSON: "
-            '{"summary":"short factual summary","candidates":['
-            '{"kind":"semantic|episodic|procedural","content":"...",'
-            '"source_index":0}]}. '
-            "Candidates must cite the exact turn index and be directly supported "
-            "by that turn. If uncertain, omit the candidate.",
-        ),
-        ("human", numbered),
-    ])
-    raw = response.content if isinstance(response.content, str) else str(response.content)
-    parsed = parse_qwen_json(raw)
-    if not isinstance(parsed, dict) or not isinstance(parsed.get("candidates"), list):
-        raise ValueError("Invalid Qwen JSON response")
-    safe_candidates = []
-    for candidate in parsed["candidates"][:10]:
+def validate_candidates(parsed: dict, turns: list[dict]) -> list[dict]:
+    """Check that proposed memory has a real user-turn provenance."""
+    items = parsed.get("candidates", [])
+    if not isinstance(items, list):
+        print("[Memory extraction] candidates was not a list:", type(items).__name__)
+        return []
+    print(f"[Memory extraction] Qwen proposed {len(items)} raw candidate(s)")
+    accepted = []
+    for candidate in items[:10]:
         if not isinstance(candidate, dict):
+            print("[Memory rejected] Not a JSON object:", repr(candidate)[:150])
             continue
         ix = candidate.get("source_index")
-        kind = candidate.get("kind")
+        if isinstance(ix, str) and ix.strip().isdigit():
+            ix = int(ix.strip())
+        kind = str(candidate.get("kind", "")).strip().lower()
         content = candidate.get("content")
         if (
             type(ix) is int and 0 <= ix < len(turns)
-            and turns[ix]["role"] == "user"
+            and turns[ix].get("role") == "user"
             and kind in ("semantic", "episodic", "procedural")
-            and isinstance(content, str) and 0 < len(content) < 500
+            and isinstance(content, str) and 0 < len(content.strip()) < 500
         ):
-            # This verifies source *existence*, not semantic entailment.
-            safe_candidates.append({
-                "kind": kind,
-                "content": content,
-                "source": f"user_turn_{ix}",
-                "source_text": turns[ix]["content"],
+            accepted.append({
+                "kind": kind, "content": content.strip(),
+                "source": f"user_turn_{ix}", "source_text": turns[ix]["content"],
             })
+        else:
+            print("[Memory rejected] Invalid type/index/source:",
+                  repr(candidate)[:300])
+    return accepted
+
+
+def propose_memories(model: ChatOllama, turns: list[dict]) -> dict:
+    user_turns = [(i, m["content"]) for i, m in enumerate(turns)
+                  if m.get("role") == "user" and m.get("content", "").strip()]
+    numbered = "\\n".join(f"{i}. user: {content}" for i, content in user_turns)
+    instruction = (
+        "You extract long-term memory candidates from USER statements. "
+        "Return a single JSON object with exactly two keys: summary and candidates. "
+        "Each candidate MUST have kind (semantic, episodic, or procedural), "
+        "content (a short faithful statement), and source_index (the original "
+        "number of the USER turn). Extract explicit non-sensitive preferences, "
+        "completed events, and standing workflows. Do NOT save passwords, "
+        "sensitive information, or assistant-generated claims. "
+        "You may extract multiple candidates from different user turns. "
+        "Example input: '2. user: I prefer Python.' "
+        "Example output: "
+        '{"summary":"Prefers Python.","candidates":'
+        '[{"kind":"semantic","content":"Prefers Python.","source_index":2}]}. '
+        "Never cite a turn number that does not appear in the input."
+    )
+    if not user_turns:
+        return {"summary": "", "candidates_for_review": []}
+
+    def ask(extra: str) -> tuple[dict, list[dict]]:
+        response = model.invoke([
+            ("system", instruction + extra),
+            ("human", "User turns with ORIGINAL indices:\\n" + numbered),
+        ])
+        raw = response.content if isinstance(response.content, str) else str(response.content)
+        parsed = parse_qwen_json(raw)
+        return parsed, validate_candidates(parsed, turns)
+
+    parsed, candidates = ask("")
+    if not candidates:
+        # A small model may summarize correctly but omit or misformat the array.
+        # Retry once; do not invent or silently save fallback memories.
+        print("[Memory extraction] No valid candidates; retrying Qwen once.")
+        parsed_retry, candidates = ask(
+            " Focus on extracting at least one grounded candidate IF the user "
+            "explicitly stated a preference, a completed event, or a rule. "
+            "Use an empty candidates array only when no suitable statement exists."
+        )
+        if candidates:
+            parsed = parsed_retry
     return {
         "summary": str(parsed.get("summary", "")),
-        "candidates_for_review": safe_candidates,
+        "candidates_for_review": candidates,
     }
 
 
