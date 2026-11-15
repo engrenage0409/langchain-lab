@@ -1,3 +1,69 @@
+# Real integrated Qwen + Milvus + LangGraph chat (recommended)
+
+This is the **first experiment to run** if you want one real end-to-end agent instead of separate toy primitives.
+
+## Setup
+
+Ensure local Ollama is running and has both models:
+
+```powershell
+conda activate pytorch_env
+cd D:\GH\langchain-lab
+git pull
+python -m pip install -r requirements.txt
+ollama list
+ollama pull nomic-embed-text
+ollama pull qwen3-vl:2b-instruct
+python -m pytest -q tests\test_real_memory_agent.py
+python .\05_memory\real_memory_agent.py --thread chat-a
+```
+
+Type the following **one at a time** at `You>`:
+
+```text
+我喜欢用 Python 做计算机视觉项目。
+我今天完成了 MCP HTTP 和 LangGraph 的联调。
+以后发布工程审查报告前，需要先人工审核。
+/history
+/remember
+/list
+/exit
+```
+
+When `/remember` is executed, Qwen proposes semantic/episodic/procedural memories with quoted source turns. **Review and enter `yes` for only the grounded candidates you wish to store**. No write occurs without approval. Saved records go into SQLite, and the vector index is rebuilt in Milvus.
+
+Then open a **new conversation thread**:
+
+```powershell
+python .\05_memory\real_memory_agent.py --thread chat-b
+```
+
+Ask:
+
+```text
+我之前说过，我更喜欢用什么语言做视觉项目？发布报告前有什么要求？
+```
+
+The fresh `chat-b` thread has no history from `chat-a`, but the relevant memory is loaded from **the shared Milvus long-term index** and inserted into Qwen's context. The program prints `[LONG-TERM RETRIEVAL / Milvus]`, `[SHORT-TERM / LangGraph]`, and `[QWEN ANSWER]` to prove the execution path.
+
+To demonstrate same-thread session recovery, exit and relaunch `--thread chat-a`, then type `/history` and compare that with `chat-b`.
+
+To forget: type `/list`, copy an exact memory ID, then `/forget <ID>`. It deletes the canonical SQLite record **and rebuilds the Milvus index**.
+
+## Which parts are real?
+
+- **Qwen**: `ChatOllama("qwen3-vl:2b-instruct")` generates answers and proposes memories from real turns.
+- **LangGraph**: `SqliteSaver` stores message history per `thread_id` across restarts.
+- **Milvus**: `OllamaEmbeddings("nomic-embed-text")` embeds queries and memories; real similarity search returns relevant long-term records.
+- **Context budget**: `compact_messages()` trims older messages to an approximate character-based budget (not model-native tokenization). Old omitted details are **not** truly summarized in this example.
+- **Consolidation**: Qwen produces a proposed summary and candidate memories, with human confirmation before storage.
+- **Forgetting**: deletes from SQLite and synchronously rebuilds this demo's Milvus index.
+- **KV Cache**: lives in Ollama's inference engine and is NOT implemented by this Python Agent or stored in SQLite.
+
+Limitations: single-user example, no user authentication, vector search returns relevance not truth probability, and the provided source-turn index is verified structurally but **not factually entailed**. A real deployment must add source validation, safety/privacy filtering, per-user scoping and exact tokenizer accounting. The demo does not automatically decide to consolidate after each message; call `/remember` deliberately.
+
+---
+
 # LLM + Agent Memory Lab
 
 A compact, runnable lab covering **five kinds of memory mechanisms**. No external personal information is used; the sample turns are synthetic.
