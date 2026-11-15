@@ -13,3 +13,9 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local Milvus and checkpoint state
+data/
+*.sqlite
+*.sqlite-*
+*.db/
