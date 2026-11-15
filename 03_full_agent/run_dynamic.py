@@ -75,6 +75,7 @@ def main() -> None:
     parser.add_argument("--thread", default="dynamic-demo-001")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--fake", action="store_true", help="Offline orchestration demo (no LLM/Milvus)")
+    parser.add_argument("--mcp-url", default=None, help="Optional HTTP MCP server URL, e.g. http://127.0.0.1:8000/mcp")
     parser.add_argument("--task", default=DEFAULT_REQUEST)
     parser.add_argument("--description", default=DEFAULT_DESCRIPTION)
     parser.add_argument("--checkpoint", default="./data/dynamic_checkpoints.sqlite")
@@ -96,7 +97,7 @@ def main() -> None:
         store = RuleStore(uri=args.milvus_uri)
         try:
             store.seed()
-            workers = AgentWorkers(store)
+            workers = AgentWorkers(store, mcp_url=args.mcp_url)
             planner = QwenPlanner()
         except BaseException:
             store.close()
