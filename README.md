@@ -1,3 +1,102 @@
+# NEW: Qwen-driven dynamic DAG planner (recommended entrypoint)
+
+**This is the new fully task-dependent workflow.** Earlier `03_full_agent/main.py` and `workflow.py` remain as fixed-workflow comparison examples. Use **`run_dynamic.py`** for autonomous planning.
+
+## The dynamic execution graph
+
+```text
+User request + drawing TEXT description
+              |
+        Qwen DAG Planner
+              |
+     strict plan validation
+       (agent whitelist,
+      dependencies, cycles,
+       task budget <= 8)
+              |
+       LangGraph Scheduler <-------+
+              |                   |
+   all dependency-ready tasks      |
+    via Send => concurrent         |
+              |                   |
+        LangChain Agent            |
+     (Qwen tool-calling loop)      |
+  symbol / geometry / research /   |
+        validate                  |
+              |                   |
+       merge task results --------+
+              |
+         all tasks done?
+              |
+    LangGraph interrupt() -> human approval
+              |
+         approved / rejected
+```
+
+Planner returns `{ "tasks": [{"id":"T1","agent":"symbol","instruction":"...","depends_on":[]}, ...] }`. The scheduler runs **all** currently ready tasks in parallel. Downstream tasks execute **only after** their dependencies complete. Choosing a single agent means returning one task; chaining tasks means adding dependencies. Both choices are made by Qwen, not predefined in the Python graph. The planner may choose repeated agents. Tool execution is still done by the LangChain `create_agent()` worker. The workflow validates model-generated plans but cannot guarantee their semantic quality.
+
+### Windows setup (recommended)
+
+```powershell
+conda activate pytorch_env
+cd D:\GH\langchain-lab
+git pull
+python -m pip install -r requirements.txt
+```
+
+**Step 1: run offline scheduling tests (no Ollama or Milvus):**
+
+```powershell
+python -m pytest -q tests\test_dynamic_workflow.py
+```
+
+**Step 2: run a complete fake demonstration (no Ollama or Milvus):**
+
+```powershell
+python .\03_full_agent\run_dynamic.py --fake --thread fake-001
+```
+
+You will see `[Plan]`, `[Scheduler] ready: ['T1', 'T2']`, worker execution, and the `[APPROVAL]` prompt. The fake mode uses a **hardcoded example DAG** and fake tools; it proves orchestration, not LLM planning or Milvus retrieval.
+
+**Step 3: connect real Ollama + Milvus:**
+
+```powershell
+ollama pull nomic-embed-text
+ollama list
+$env:MILVUS_URI = "http://127.0.0.1:19530"
+# Set MILVUS_TOKEN only if your server requires it:
+# $env:MILVUS_TOKEN = "<your-credential>"
+python .\03_full_agent\run_dynamic.py --thread real-001
+```
+
+You must have a Milvus server running and reachable at `MILVUS_URI` (e.g. Milvus Standalone via Docker Desktop / WSL2 or remote server). See [official Milvus Docker setup](https://milvus.io/docs/install_standalone-docker-compose.md). **Native Windows Milvus Lite is not a reliable default; the requirements deliberately skip it on Windows.** On supported Linux setups, you can omit `MILVUS_URI` and use the local default `./data/agent_rules.db`.
+
+If Qwen fails to generate valid JSON twice, the planner raises an error rather than silently switching to a hardcoded plan. With the 2B model you may need to retry using a new `--thread` or swap to a stronger Ollama model in `planner.py` and `agents.py`.
+
+**Try three genuinely different requests** (each must use a new thread ID):
+
+```powershell
+python .\03_full_agent\run_dynamic.py --thread real-symbol --task "Only check the welding symbol annotations."
+python .\03_full_agent\run_dynamic.py --thread real-both --task "Independently check symbols and dimensions, then compare findings."
+python .\03_full_agent\run_dynamic.py --thread real-rag --task "First retrieve the relevant rules, then validate the reported dimension mismatch."
+```
+
+You will see the **actual** Qwen-produced plan printed and the dependency-ready task batches printed by the scheduler. Parallel nodes issue concurrent requests, but local Ollama may serialize GPU inference.
+
+**Approval / persistent resume:**
+
+At `[APPROVAL] Publish report? yes/no:`, type `yes` or `no`. To test resume across process restarts, stop the process while it is waiting at the approval prompt, and run:
+
+```powershell
+python .\03_full_agent\run_dynamic.py --thread real-001 --resume
+```
+
+Keep the same checkpoint file (`./data/dynamic_checkpoints.sqlite`) and the same `--thread`. Don't reuse a completed thread for a new run.
+
+**Limitations:** This is a demonstration based on a drawing *text description*, not image/CAD analysis. The seed rules are illustrative, not official engineering standards. The evidence validator tool only checks presence of evidence, not truth. Human approval is local CLI input, not authenticated. There is no autonomous re-planning after execution failures; the planner makes one validated DAG per run.
+
+---
+
 # LangChain + LangGraph Lab
 
 Practical experiments with LangChain, LangGraph, local Ollama Qwen, real executable tools, Milvus semantic retrieval, and human approval.
